@@ -3,9 +3,7 @@ package org.sandbox.akka.pingpong
 import scala.concurrent.Await
 import scala.concurrent.duration.DurationInt
 import scala.util.Try
-
 import com.typesafe.config.ConfigFactory
-
 import akka.actor.Actor
 import akka.actor.ActorLogging
 import akka.actor.ActorRef
@@ -18,6 +16,8 @@ import akka.actor.Terminated
 import akka.actor.actorRef2Scala
 import akka.event.LoggingReceive
 import akka.remote.RemoteScope
+import akka.actor.ActorNotFound
+import scala.concurrent.Future
 
 class Bouncer[T](bounce: (T, ActorRef) => Option[T]) extends Actor with ActorLogging {
   implicit val ec = context.dispatcher
@@ -33,42 +33,49 @@ class Bouncer[T](bounce: (T, ActorRef) => Option[T]) extends Actor with ActorLog
   }
 }
 
-case class Ball(bounces: Int)
+case class Ball(hits: Int)
 
 object PingPong extends App {
-  val totalBounces = 5
-
-  def bounce(bounceProbability: Double)(msg: Any, self: ActorRef): Option[Any] = msg match {
-    case Ball(bounces) => {
-//      val newBounces = bounces + 1
-      val bounceBack =
-        //newBounces < totalBounces
-        scala.util.Random.nextDouble < bounceProbability
-      println(s"${self.path.name}: received $msg => ${if (bounceBack) "Hit" else "Miss"}!")
-      if (!bounceBack) {
+  def bounce(hitProbability: Double)(msg: Any, self: ActorRef): Option[Any] = msg match {
+    case Ball(hits) => {
+      val hitBall =
+        scala.util.Random.nextDouble < hitProbability
+      println(s"${self.path.name}: received $msg => ${if (hitBall) "Hit" else "Miss"}!")
+      if (!hitBall) {
         self ! PoisonPill
         None
-      } else Some(Ball(bounces + 1))
+      } else Some(Ball(hits + 1))
     }
     case _ => None
   }
 
   val system = ActorSystem("PingPong")
-
-  def resolveRemotePong: ActorRef = {
-    val pongF =
-      system.actorSelection("akka.tcp://Pong@127.0.0.1:2552/user/pong").resolveOne(1.second)
-    Await.result(pongF, 1.second)
-  }
+  implicit val executionContenxt = system.dispatcher
 
   def resolveOrCreateRemotePong: ActorRef = {
+    val uriStr = "akka.tcp://Pong@127.0.0.1:2552"
+
     def createRemotePong: ActorRef = {
-      val address = AddressFromURIString("akka.tcp://Pong@127.0.0.1:2552")
-      system.actorOf(
-        Props(new Bouncer(bounce(1))).withDeploy(Deploy(scope = RemoteScope(address))),
-        name = "pong")
+      println("creating pong actor ...")
+      val address = AddressFromURIString(uriStr)
+      val pong =
+        // note that as the actor is created from system it will be stopped when system shuts down!
+        system.actorOf(
+          Props(new Bouncer(bounce(1))).withDeploy(Deploy(scope = RemoteScope(address))),
+          name = "pong")
+      println(s"created $pong")
+      pong
     }
-    Try(resolveRemotePong) getOrElse createRemotePong
+
+    def resolveRemotePong: Future[ActorRef] = {
+      val pong =
+        system.actorSelection(s"$uriStr/user/pong").resolveOne(1.second)
+      pong onSuccess { case p => println(s"found $p") }
+      pong
+    }
+
+    val pong = resolveRemotePong recover { case _: ActorNotFound  => createRemotePong }
+    Await.result(pong, 1.second)
   }
 
   val ping = system.actorOf(Props(new Bouncer(bounce(0.8))), name = "ping")
@@ -85,11 +92,14 @@ object PingPong extends App {
 
   ping.tell("ignoredMsg", ActorRef.noSender)
   ping.tell(Ball(0), pong)
+//  pong onSuccess { case p => ping.tell(Ball(0), p) }
+//  Await.ready(pong, 1.second)
 }
 
 object Pong extends App {
+  val port = 2552
   val config =
-    ConfigFactory.parseString("akka.remote.netty.tcp.port=2552").withFallback(ConfigFactory.load)
+    ConfigFactory.parseString(s"akka.remote.netty.tcp.port=$port").withFallback(ConfigFactory.load)
   val system = ActorSystem("Pong", config)
 //  val pong = system.actorOf(Props(new Bouncer(PingPong.bounce(1))), name = "pong")
 }
