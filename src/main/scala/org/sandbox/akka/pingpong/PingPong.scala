@@ -3,9 +3,7 @@ package org.sandbox.akka.pingpong
 import scala.concurrent.Await
 import scala.concurrent.Future
 import scala.concurrent.duration.DurationInt
-
 import com.typesafe.config.ConfigFactory
-
 import akka.actor.Actor
 import akka.actor.ActorLogging
 import akka.actor.ActorNotFound
@@ -19,8 +17,9 @@ import akka.actor.Terminated
 import akka.actor.actorRef2Scala
 import akka.event.LoggingReceive
 import akka.remote.RemoteScope
+import scala.reflect.ClassTag
 
-class Bouncer[T](bounce: (T, ActorRef) => Option[T]) extends Actor with ActorLogging {
+class Bouncer[T : ClassTag](bounce: (T, ActorRef) => Option[T]) extends Actor with ActorLogging {
   implicit val ec = context.dispatcher
   def scheduleBounce(msg: T) =
     // avoid blocking: schedule instead of Thread.sleep()!
