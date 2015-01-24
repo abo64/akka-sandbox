@@ -1,11 +1,14 @@
 package org.sandbox.akka.pingpong
 
 import scala.concurrent.Await
+import scala.concurrent.Future
 import scala.concurrent.duration.DurationInt
-import scala.util.Try
+
 import com.typesafe.config.ConfigFactory
+
 import akka.actor.Actor
 import akka.actor.ActorLogging
+import akka.actor.ActorNotFound
 import akka.actor.ActorRef
 import akka.actor.ActorSystem
 import akka.actor.AddressFromURIString
@@ -16,8 +19,6 @@ import akka.actor.Terminated
 import akka.actor.actorRef2Scala
 import akka.event.LoggingReceive
 import akka.remote.RemoteScope
-import akka.actor.ActorNotFound
-import scala.concurrent.Future
 
 class Bouncer[T](bounce: (T, ActorRef) => Option[T]) extends Actor with ActorLogging {
   implicit val ec = context.dispatcher
