@@ -4,7 +4,6 @@ import scala.concurrent.duration.DurationInt
 
 import org.junit.runner.RunWith
 import org.scalatest.BeforeAndAfterAll
-import org.scalatest.Finders
 import org.scalatest.FlatSpecLike
 import org.scalatest.Matchers
 

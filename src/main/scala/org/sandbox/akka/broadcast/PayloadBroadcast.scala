@@ -1,10 +1,15 @@
 package org.sandbox.akka.broadcast
 
 import akka.actor.Actor
-import akka.actor.Props
+import akka.actor.ActorLogging
 import akka.actor.ActorRef
 import akka.actor.ActorSystem
-import akka.actor.ActorLogging
+import akka.actor.Props
+import akka.actor.actorRef2Scala
+import akka.event.LoggingReceive
+import akka.routing.ActorRefRoutee
+import akka.routing.RoundRobinRoutingLogic
+import akka.routing.Router
 
 object PayloadBroadcast extends App {
   type PayloadId = Int
@@ -15,59 +20,60 @@ object PayloadBroadcast extends App {
   case class Payloads(payloads: Seq[Payload], chunkSize: Int)
 
   class PayloadConsumer extends Actor with ActorLogging {
-    def receive = {
-      case pl@Payload(id, _) =>
-        log.info(s"${self.path.name} received: $pl")
-        sender ! PayloadAck(id)
+    def receive = LoggingReceive {
+      case Payload(id, _) => sender ! PayloadAck(id)
     }
   }
 
   class PayloadBroadcaster extends Actor {
     def receive = waiting
 
-    def waiting: Receive = {
-      case PayloadBroadcast(howMany, payloads) => {
-        // TODO only create howMany consumers
-        (payloads zipWithIndex) foreach {
-          case (payload, i) =>
-            val consumer = context.actorOf(Props[PayloadConsumer], s"consumer$i")
-            consumer ! payload
+    def waiting: Receive = LoggingReceive {
+      case PayloadBroadcast(howManyConsumers, payloads) => {
+        val consumers =
+          Vector.tabulate(howManyConsumers){ i =>
+          val consumer = context.actorOf(Props[PayloadConsumer], s"consumer$i")
+          ActorRefRoutee(consumer)
         }
+        val router = Router(RoundRobinRoutingLogic(), consumers)
         val ids = payloads map (_.id)
-        idsToProcess = ids
         context.become(processing(ids, sender))
+
+        payloads foreach(router.route(_, self))
       }
     }
 
-    var idsToProcess: Seq[Int] = _
-
-    def processing(ids: Seq[Int], ackActor: ActorRef): Receive = {
-      case PayloadAck(id) => {
-        idsToProcess = idsToProcess.diff(Seq(id))
-        if (idsToProcess.isEmpty) {
-          ackActor ! Done
-          context.children foreach context.stop
-          context.become(waiting)
+    def processing(ids: Seq[Int], ackActor: ActorRef): Receive = LoggingReceive {
+      var idsToProcess: Seq[Int] = ids
+      def process: Receive = {
+        case PayloadAck(id) => {
+          idsToProcess = idsToProcess.diff(Seq(id))
+          if (idsToProcess.isEmpty) {
+            ackActor ! Done
+            context.children foreach context.stop
+            context.become(waiting)
+          }
         }
       }
+      process
     }
   }
 
   def payloads(howMany: Int): Seq[Payload] =
-    Stream.range(0, howMany).map(id => Payload(id, Payload(id, s"content$id")))
+    Stream.range(0, howMany).map(id => Payload(id, s"content$id"))
 
   val system = ActorSystem("PayloadBroadcast")
   val broadcaster = system.actorOf(Props[PayloadBroadcaster], "broadcaster")
   val sender = system.actorOf(Props(
       new Actor {
-        def receive = {
-          case msg => {
-            println(s"received $msg")
+        def receive = LoggingReceive {
+          case Done => {
+            println(s"shutting down system ...")
             system.shutdown
           }
         }
-      }), "testSender")
-  broadcaster.tell(PayloadBroadcast(5, payloads(5)), sender)
+      }), "terminator")
+  broadcaster.tell(PayloadBroadcast(5, payloads(10)), sender)
 
 //  system.shutdown
 }

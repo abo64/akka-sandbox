@@ -21,4 +21,4 @@ case class Payloads(payloads: Seq[Payload]], chunkSize: Int)
 2.3 Write a ChunkBroadcaster actor that receives a Payloads message, then creates chunks of size chunkSize from the payloads. It creates child Broadcaster actors (one per chunk) and sends the chunks to them. Finally, after all children have sent their Done message it itself sends a Done message to its sender and stop all children.
 Hint: For creating a Seq[Payload] you can use this function
 def payloads(howMany: Int): Seq[Payload] =
-  Stream.range(0, howMany).map(id => Payload(id , Payload(id, s"content$id")))
+  Stream.range(0, howMany).map(id => Payload(id , s"content$id"))
