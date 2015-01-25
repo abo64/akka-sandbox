@@ -49,7 +49,11 @@ object PingPong extends App {
     case _ => None
   }
 
-  val system = ActorSystem("PingPong")
+  val remoteConfig = {
+    val config = ConfigFactory.load()
+    config.getConfig("with-remote").withFallback(config)
+  }
+  val system = ActorSystem("PingPong", remoteConfig)
   implicit val executionContenxt = system.dispatcher
 
   def resolveOrCreateRemotePong: ActorRef = {
@@ -97,9 +101,13 @@ object PingPong extends App {
 }
 
 object Pong extends App {
+  val remoteConfig = {
+    val config = ConfigFactory.load()
+    config.getConfig("with-remote").withFallback(config)
+  }
   val port = 2552
   val config =
-    ConfigFactory.parseString(s"akka.remote.netty.tcp.port=$port").withFallback(ConfigFactory.load)
+    ConfigFactory.parseString(s"akka.remote.netty.tcp.port=$port").withFallback(remoteConfig)
   val system = ActorSystem("Pong", config)
 //  val pong = system.actorOf(Props(new Bouncer(PingPong.bounce(1))), name = "pong")
 }
