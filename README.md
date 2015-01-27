@@ -1,13 +1,13 @@
 # Akka Exercises
 
-## 1. Pingpong [Code](PingPong.scala)
+## 1. Pingpong [Code](src/main/scala/org/sandbox/akka/pingpong/PingPong.scala)
 * Write two actors Ping and Pong that send each other a "Ball" message to and fro
 for a predefined number of times (or use scala.util.Random to decide whether the ball is hit or not).  
 On reception they should do a println to the Console. You might have a Thread.sleep() included to prolong the fun.
 * Use Akka's Logging instead of the Console. Additionally, switch on DEBUG logging level and see what you get.
 * Use Akka's Remoting feature to run the actors in separate JVMs.
 
-## 2. Broadcast [Code](PayloadBroadcast.scala)
+## 2. Broadcast [Code](src/main/scala/org/sandbox/akka/broadcast/PayloadBroadcast.scala)
 Given messages:  
 type PayloadId = Int  
 case class Payload(id: PayloadId, content: Any)  
