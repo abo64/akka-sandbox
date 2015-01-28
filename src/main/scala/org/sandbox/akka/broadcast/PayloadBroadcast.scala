@@ -2,11 +2,9 @@ package org.sandbox.akka.broadcast
 
 import java.util.concurrent.TimeoutException
 
-import scala.concurrent.Await
 import scala.concurrent.Future
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.duration.FiniteDuration
-import scala.util.Try
 
 import akka.actor.Actor
 import akka.actor.ActorLogging
@@ -17,6 +15,7 @@ import akka.actor.Stash
 import akka.actor.actorRef2Scala
 import akka.event.LoggingReceive
 import akka.pattern.ask
+import akka.pattern.pipe
 import akka.routing.ActorRefRoutee
 import akka.routing.RoundRobinRoutingLogic
 import akka.routing.Router
@@ -40,7 +39,8 @@ object PayloadBroadcast extends App {
 
   class PayloadBroadcaster extends Actor with Stash {
 
-    def receive = waiting //receiveWithFutures
+    def receive = waiting
+      //receiveWithFutures
 
     private def getConsumers(howManyConsumers: Int, jobId: Int): Vector[ActorRef] =
       Vector.tabulate(howManyConsumers) { i =>
@@ -75,8 +75,8 @@ object PayloadBroadcast extends App {
       }
 
       def scheduleTimeout = {
-        Option(system) foreach { system =>
-          import system.dispatcher // use the system's dispatcher as ExecutionContext
+        Option(system) foreach { system => // to avoid null system in test
+          import system.dispatcher
           system.scheduler.scheduleOnce(timeout) { self ! TimeoutExpired }
         }
       }
@@ -109,23 +109,21 @@ object PayloadBroadcast extends App {
 
         val timeout = 3.seconds
         implicit val theTimeout = akka.util.Timeout(timeout)
-        val acks = payloads zip Seq.fill(payloads.size)(nextConsumer) map {
-          case (payload, consumer) => consumer ? payload
-        }
-
-        def waitForResults =
-          Option(system) foreach { system =>
-            import system.dispatcher
-            Await.result(Future.sequence(acks), timeout)
+        val acks: Seq[Future[Any]] =
+          payloads zip Seq.fill(payloads.size)(nextConsumer) map {
+            case (payload, consumer) => consumer ? payload
           }
-        val msg: Any =
-          Try(waitForResults)
-            .map { _ => Done(jobId) }
-            .recover {
-              case _: TimeoutException => Timeout(jobId)
-            } get
 
-        sender ! msg
+        Option(system) foreach { system => // to avoid null system in test
+          import system.dispatcher
+          val futureMsg: Future[Any] =
+            Future.sequence(acks)
+              .map { _ => Done(jobId) }
+              .recover {
+                case _: TimeoutException => Timeout(jobId)
+              }
+          futureMsg pipeTo sender
+        }
       }
     }
   }

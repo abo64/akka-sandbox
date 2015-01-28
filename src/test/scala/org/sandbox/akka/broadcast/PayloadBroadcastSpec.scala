@@ -59,7 +59,7 @@ class PayloadBroadcastSpec
     }
     val dones = (1 to 5) map(jobId => Done(jobId))
     msgs.par foreach (broadcaster ! _)
-    within(2.seconds) {
+    within(3.seconds) {
       expectMsgAllOf(dones:_*)
     }
   }
