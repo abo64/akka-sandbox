@@ -1,5 +1,7 @@
 package org.sandbox.akka.broadcast
 
+import scala.concurrent.duration.DurationInt
+import scala.concurrent.duration.FiniteDuration
 import akka.actor.Actor
 import akka.actor.ActorLogging
 import akka.actor.ActorRef
@@ -11,8 +13,11 @@ import akka.event.LoggingReceive
 import akka.routing.ActorRefRoutee
 import akka.routing.RoundRobinRoutingLogic
 import akka.routing.Router
-import scala.concurrent.duration.FiniteDuration
-import scala.concurrent.duration.DurationInt
+import akka.pattern.ask
+import scala.concurrent.Future
+import scala.concurrent.Await
+import scala.util.Try
+import java.util.concurrent.TimeoutException
 
 object PayloadBroadcast extends App {
   type PayloadId = Int
@@ -32,31 +37,38 @@ object PayloadBroadcast extends App {
   }
 
   class PayloadBroadcaster extends Actor with Stash {
-    def receive = waiting
+
+    def receive = waiting //receiveWithFutures
+
+    private def getConsumers(howManyConsumers: Int, jobId: Int): Vector[ActorRef] =
+      Vector.tabulate(howManyConsumers) { i =>
+        context.actorOf(Props[PayloadConsumer], s"consumer$i-$jobId")
+      }
 
     def waiting: Receive = LoggingReceive {
-      case PayloadBroadcastMsg(jobId, howManyConsumers, payloads) => {
-        val consumers =
-          Vector.tabulate(howManyConsumers) { i =>
-            val consumer = context.actorOf(Props[PayloadConsumer], s"consumer$i-$jobId")
-            ActorRefRoutee(consumer)
-          }
-        val router = Router(RoundRobinRoutingLogic(), consumers)
-        val payloadIds = payloads map (_.id)
-        context.become(processing(jobId, payloadIds, sender))
+      def getRouter(howManyConsumers: Int, jobId: Int): Router = {
+        val consumers = getConsumers(howManyConsumers, jobId) map ActorRefRoutee
+        Router(RoundRobinRoutingLogic(), consumers)
+      }
 
-        payloads foreach (router.route(_, self))
+      {
+        case PayloadBroadcastMsg(jobId, howManyConsumers, payloads) => {
+          val router = getRouter(howManyConsumers, jobId)
+          val payloadIds = payloads map (_.id)
+          context.become(processing(jobId, payloadIds, sender))
+
+          payloads foreach (router.route(_, self))
+        }
       }
     }
 
     def processing(jobId: Int, payloadIds: Seq[Int], ackActor: ActorRef,
-      timeout: FiniteDuration = 3.seconds): Receive = LoggingReceive
-    {
+      timeout: FiniteDuration = 3.seconds): Receive = LoggingReceive {
       def becomeWaiting(msg: Any) = {
         ackActor ! msg
         context.children foreach context.stop
         unstashAll()
-//        context.become(waiting)
+        //        context.become(waiting)
         context.unbecome
       }
 
@@ -80,6 +92,39 @@ object PayloadBroadcast extends App {
 
       scheduleTimeout
       process
+    }
+
+    def receiveWithFutures: Receive = LoggingReceive {
+      case PayloadBroadcastMsg(jobId, howManyConsumers, payloads) => {
+        val consumers = getConsumers(howManyConsumers, jobId)
+        var currentConsumer = 0
+        def nextConsumer: ActorRef = {
+          // poor man's round-robin
+          val result = consumers(currentConsumer)
+          currentConsumer = (currentConsumer + 1) % howManyConsumers
+          result
+        }
+
+        val timeout = 3.seconds
+        implicit val theTimeout = akka.util.Timeout(timeout)
+        val acks = payloads zip Seq.fill(payloads.size)(nextConsumer) map {
+          case (payload, consumer) => consumer ? payload
+        }
+
+        def waitForResults =
+          Option(system) foreach { system =>
+            import system.dispatcher
+            Await.result(Future.sequence(acks), timeout)
+          }
+        val msg: Any =
+          Try(waitForResults)
+            .map { _ => Done(jobId) }
+            .recover {
+              case _: TimeoutException => Timeout(jobId)
+            } get
+
+        sender ! msg
+      }
     }
   }
 
