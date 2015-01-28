@@ -3,7 +3,11 @@ package org.sandbox.akka.broadcast
 import scala.concurrent.duration.DurationInt
 
 import org.junit.runner.RunWith
+import org.sandbox.akka.broadcast.PayloadBroadcast.Done
+import org.sandbox.akka.broadcast.PayloadBroadcast.PayloadBroadcastMsg
+import org.sandbox.akka.broadcast.PayloadBroadcast.PayloadBroadcaster
 import org.scalatest.BeforeAndAfterAll
+import org.scalatest.Finders
 import org.scalatest.FlatSpecLike
 import org.scalatest.Matchers
 
@@ -44,4 +48,20 @@ class PayloadBroadcastSpec
       expectNoMsg
     }
   }
+
+  behavior of "PayloadBroadcaster"
+
+  val broadcaster = system.actorOf(Props[PayloadBroadcaster])
+
+  it should "process all Payload messages" in {
+    val msgs = (1 to 5) map { jobId =>
+      PayloadBroadcastMsg(jobId, 5, PayloadBroadcast.payloads(10))
+    }
+    val dones = (1 to 5) map(jobId => Done(jobId))
+    msgs.par foreach (broadcaster ! _)
+    within(2.seconds) {
+      expectMsgAllOf(dones:_*)
+    }
+  }
+
 }

@@ -11,12 +11,12 @@ On reception they should do a println to the Console. You might have a Thread.sl
 Given messages:  
 type PayloadId = Int  
 case class Payload(id: PayloadId, content: Any)  
-case class PayloadBroadcast(howMany: Int, payloads: Seq[Payload])  
+case class PayloadBroadcastMsg(jobId: Int, howManyConsumers: Int, payloads: Seq[Payload])  
 case class PayloadAck(id: PayloadId)  
-case object Done  
+case object Done(jobId: Int)  
 case class Payloads(payloads: Seq[Payload]], chunkSize: Int)
 * Write a PayloadConsumer actor that upon reception of a Payload sends back an PayloadAck message to the sender.
-* Write a Broadcaster actor that for a PayloadBroadcast message creates howMany PayloadConsumer child actors and then sends the Payloads to them, respectively. After that it should wait for all PayloadAck messages to arrive and then send a Done message back to the sender and stop all children.
+* Write a Broadcaster actor that for a PayloadBroadcastMsg creates howManyConsumers PayloadConsumer child actors and then sends the Payloads to them, respectively. After that it should wait for all PayloadAck messages to arrive and then send a Done message back to the sender and stop all children.
 * You might try to use Akka's Routing feature for the Broadcaster.
 * Write a ChunkBroadcaster actor that receives a Payloads message, then creates chunks of size chunkSize from the payloads. It creates child Broadcaster actors (one per chunk) and sends the chunks to them. Finally, after all children have sent their Done message it itself sends a Done message to its sender and stop all children.
 Hint: For creating a Seq[Payload] you can use this function  
