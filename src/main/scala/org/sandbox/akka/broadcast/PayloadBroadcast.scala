@@ -1,7 +1,13 @@
 package org.sandbox.akka.broadcast
 
+import java.util.concurrent.TimeoutException
+
+import scala.concurrent.Await
+import scala.concurrent.Future
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.duration.FiniteDuration
+import scala.util.Try
+
 import akka.actor.Actor
 import akka.actor.ActorLogging
 import akka.actor.ActorRef
@@ -10,14 +16,10 @@ import akka.actor.Props
 import akka.actor.Stash
 import akka.actor.actorRef2Scala
 import akka.event.LoggingReceive
+import akka.pattern.ask
 import akka.routing.ActorRefRoutee
 import akka.routing.RoundRobinRoutingLogic
 import akka.routing.Router
-import akka.pattern.ask
-import scala.concurrent.Future
-import scala.concurrent.Await
-import scala.util.Try
-import java.util.concurrent.TimeoutException
 
 object PayloadBroadcast extends App {
   type PayloadId = Int
