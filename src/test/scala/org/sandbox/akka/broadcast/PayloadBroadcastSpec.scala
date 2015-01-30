@@ -25,7 +25,9 @@ import akka.testkit.TestKit
 
 @RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class PayloadBroadcastSpec
-  extends TestKit(ActorSystem("PayloadBroadcastSpec", ConfigFactory.parseString("akka.loglevel=WARNING")))
+  extends TestKit(ActorSystem("PayloadBroadcastSpec", 
+//      ConfigFactory.parseString("akka.test.default-timeout=3.seconds")))
+      ConfigFactory.parseString("akka.loglevel=WARNING")))
   with ImplicitSender with DefaultTimeout
   with Matchers with FlatSpecLike with BeforeAndAfterAll
 {
@@ -33,7 +35,7 @@ class PayloadBroadcastSpec
 
   behavior of "PayloadConsumer"
 
-  val consumer = system.actorOf(Props[PayloadConsumer])
+  val consumer = system.actorOf(Props[PayloadConsumer], "consumer")
 
   it should "ack a Payload message" in {
     within(500 millis) {
@@ -51,13 +53,14 @@ class PayloadBroadcastSpec
 
   behavior of "PayloadBroadcaster"
 
-  val broadcaster = system.actorOf(Props[PayloadBroadcaster])
+  val broadcaster = system.actorOf(Props[PayloadBroadcaster], "broadcaster")
 
   it should "process all Payload messages" in {
-    val msgs = (1 to 5) map { jobId =>
+    val msgRange = 1 to 5
+    val msgs = msgRange map { jobId =>
       PayloadBroadcastMsg(jobId, 5, PayloadBroadcast.payloads(10))
     }
-    val dones = (1 to 5) map(jobId => Done(jobId))
+    val dones = msgRange map(jobId => Done(jobId))
     msgs.par foreach (broadcaster ! _)
     within(3.seconds) {
       expectMsgAllOf(dones:_*)

@@ -39,8 +39,8 @@ object PayloadBroadcast extends App {
 
   class PayloadBroadcaster extends Actor with Stash {
 
-    def receive = waiting
-      //receiveWithFutures
+    def receive = //waiting
+      receiveWithFutures
 
     private def getConsumers(howManyConsumers: Int, jobId: Int): Vector[ActorRef] =
       Vector.tabulate(howManyConsumers) { i =>
@@ -64,6 +64,8 @@ object PayloadBroadcast extends App {
       }
     }
 
+    implicit val executionContext = context.system.dispatcher
+
     def processing(jobId: Int, payloadIds: Seq[Int], ackActor: ActorRef,
       timeout: FiniteDuration = 3.seconds): Receive = LoggingReceive {
       def becomeWaiting(msg: Any) = {
@@ -74,12 +76,8 @@ object PayloadBroadcast extends App {
         context.unbecome
       }
 
-      def scheduleTimeout = {
-        Option(system) foreach { system => // to avoid null system in test
-          import system.dispatcher
-          system.scheduler.scheduleOnce(timeout) { self ! TimeoutExpired }
-        }
-      }
+      def scheduleTimeout =
+        context.system.scheduler.scheduleOnce(timeout) { self ! TimeoutExpired }
 
       var idsToProcess: Seq[Int] = payloadIds
 
@@ -99,23 +97,17 @@ object PayloadBroadcast extends App {
     def receiveWithFutures: Receive = LoggingReceive {
       case PayloadBroadcastMsg(jobId, howManyConsumers, payloads) => {
         val consumers = getConsumers(howManyConsumers, jobId)
-        var currentConsumer = 0
-        def nextConsumer: ActorRef = {
-          // poor man's round-robin
-          val result = consumers(currentConsumer)
-          currentConsumer = (currentConsumer + 1) % howManyConsumers
-          result
+        def nextConsumer: Iterator[ActorRef] = {
+          Iterator.continually(consumers).flatten
         }
 
         val timeout = 3.seconds
         implicit val theTimeout = akka.util.Timeout(timeout)
         val acks: Seq[Future[Any]] =
-          payloads zip Seq.fill(payloads.size)(nextConsumer) map {
+          payloads zip Seq.fill(payloads.size)(nextConsumer.next) map {
             case (payload, consumer) => consumer ? payload
           }
 
-        Option(system) foreach { system => // to avoid null system in test
-          import system.dispatcher
           val futureMsg: Future[Any] =
             Future.sequence(acks)
               .map { _ => Done(jobId) }
@@ -123,22 +115,21 @@ object PayloadBroadcast extends App {
                 case _: TimeoutException => Timeout(jobId)
               }
           futureMsg pipeTo sender
-        }
       }
     }
   }
 
   def payloads(howMany: Int): Seq[Payload] =
-    Stream.range(0, howMany).map(id => Payload(id, s"content$id"))
+    (0 until howMany).map(id => Payload(id, s"content$id"))
 
-  val system = ActorSystem("PayloadBroadcast")
-  val broadcaster = system.actorOf(Props[PayloadBroadcaster], "broadcaster")
-  val sender = system.actorOf(Props(
+  val actorSystem = ActorSystem("PayloadBroadcast")
+  val broadcaster = actorSystem.actorOf(Props[PayloadBroadcaster], "broadcaster")
+  val sender = actorSystem.actorOf(Props(
     new Actor {
       def receive = LoggingReceive {
         case Done(42) => {
           println(s"shutting down system ...")
-          system.shutdown
+          actorSystem.shutdown
         }
       }
     }), "terminator")
