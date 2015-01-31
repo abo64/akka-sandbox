@@ -22,7 +22,7 @@ import akka.testkit.TestKit
 @RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class CountRetrieverSpec
   extends TestKit(ActorSystem("CountRetrieverSpec", 
-      ConfigFactory.parseString("akka.loglevel=WARNING")))
+      ConfigFactory.parseString("akka.loglevel=DEBUG").withFallback(ConfigFactory.load)))
   with ImplicitSender with DefaultTimeout
   with Matchers with FlatSpecLike with BeforeAndAfterAll
 {
@@ -30,14 +30,14 @@ class CountRetrieverSpec
 
   import CountRetriever._
 
-  behavior of "CountRetriever"
+  behavior of "Happy Path"
 
   it should "1. retrieve a single Count" in {
     val simpleCountProvider = new CountProvider {}
     val retriever = countRetriever(simpleCountProvider, "countRetriever-1")
-    retriever ! GetCounters(1)
+    retriever ! GetCounters(42, 1)
     within(500 millis) {
-      expectMsg(Counters(Set(1)))
+      expectMsg(Counters(42, Seq(1)))
     }
   }
 
