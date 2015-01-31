@@ -37,7 +37,16 @@ class CountRetrieverSpec
     val retriever = countRetriever(simpleCountProvider, "countRetriever-1")
     retriever ! GetCounters(42, 1)
     within(500 millis) {
-      expectMsg(Counters(42, Seq(1)))
+      expectMsg(Counters(42, Set(1)))
+    }
+  }
+
+  it should "2. retrieve multiple Counts" in {
+    val simpleCountProvider = new CountProvider {}
+    val retriever = countRetriever(simpleCountProvider, "countRetriever-2")
+    retriever ! GetCounters(42, 5)
+    within(500 millis) {
+      expectMsg(Counters(42, Set(1, 2, 3, 4, 5)))
     }
   }
 
