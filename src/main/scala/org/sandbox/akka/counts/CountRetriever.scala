@@ -6,13 +6,14 @@ import akka.actor.Actor
 import akka.actor.ActorRef
 import akka.actor.ActorRefFactory
 import akka.actor.Props
+import akka.actor.Stash
 import akka.actor.actorRef2Scala
 import akka.event.LoggingReceive
 import akka.routing.ActorRefRoutee
 import akka.routing.RoundRobinRoutingLogic
 import akka.routing.Router
 
-class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef) extends Actor {
+class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef) extends Actor with Stash {
   import CountRetriever._
   import CountGetter._
 
@@ -38,12 +39,14 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef) extends Ac
     var counters = Set.empty[Int]
     def collect: Receive = LoggingReceive {
       case Counter(jobId, counter) =>
-      counters += counter
-      if (counters.size == howMany) {
-        requestor ! Counters(jobId, counters)
-        context.children foreach context.stop
-        context.unbecome
-      }
+        counters += counter
+        if (counters.size == howMany) {
+          requestor ! Counters(jobId, counters)
+          context.children foreach context.stop
+          unstashAll
+          context.unbecome
+        }
+      case _: GetCounters => stash
     }
 
     collect
