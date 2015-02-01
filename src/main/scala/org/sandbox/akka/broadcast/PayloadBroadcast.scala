@@ -77,7 +77,7 @@ object PayloadBroadcast extends App {
       }
 
       def scheduleTimeout =
-        context.system.scheduler.scheduleOnce(timeout) { self ! TimeoutExpired }
+        context.system.scheduler.scheduleOnce(timeout, self, TimeoutExpired)
 
       var idsToProcess: Seq[Int] = payloadIds
 
