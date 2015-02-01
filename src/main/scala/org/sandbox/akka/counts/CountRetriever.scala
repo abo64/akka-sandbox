@@ -1,21 +1,25 @@
 package org.sandbox.akka.counts
 
-import scala.concurrent.duration.Duration
+import java.io.IOException
+import java.util.concurrent.TimeoutException
+
 import scala.concurrent.duration.DurationInt
+import scala.concurrent.duration.FiniteDuration
+
 import CountGetter.Counter
 import CountGetter.GetCounter
 import akka.actor.Actor
 import akka.actor.ActorRef
 import akka.actor.ActorRefFactory
+import akka.actor.OneForOneStrategy
 import akka.actor.Props
 import akka.actor.Stash
+import akka.actor.SupervisorStrategy
 import akka.actor.actorRef2Scala
 import akka.event.LoggingReceive
 import akka.routing.ActorRefRoutee
 import akka.routing.RoundRobinRoutingLogic
 import akka.routing.Router
-import scala.concurrent.duration.FiniteDuration
-import java.util.concurrent.TimeoutException
 
 class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef) extends Actor with Stash {
   import CountRetriever._
@@ -24,6 +28,8 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef) extends Ac
   def receive: Receive = waiting
 
   private def createCountGetter: ActorRef = countGetterFactory(context)
+
+  private var sendGetCounter: () => Unit = _
 
   private def waiting: Receive = LoggingReceive {
     def getCountGetters(howMany: Int, jobId: Int): Vector[ActorRef] =
@@ -35,15 +41,17 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef) extends Ac
 
     {
       case GetCounters(jobId, howMany, timeout) =>
-        val router = getRouter(howMany max 20, jobId)
+        val router = getRouter(howMany min 20, jobId)
+        sendGetCounter = () => router.route(GetCounter(jobId), self)
         context.become(collectCounts(howMany, jobId, sender, timeout))
-        (1 to howMany) foreach (_ => router.route(GetCounter(jobId), self))
+        (1 to howMany) foreach (_ => sendGetCounter())
     }
   }
 
   private def collectCounts(howMany: Int, jobId: Int, requestor: ActorRef, timeout: FiniteDuration): Receive = {
     def becomeWaiting = {
       context.children foreach context.stop
+      sendGetCounter = () => ()
       unstashAll
       context.unbecome
     }
@@ -69,6 +77,14 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef) extends Ac
     scheduleTimeout
     collect
   }
+
+  override val supervisorStrategy =
+    OneForOneStrategy(maxNrOfRetries = 3, withinTimeRange = 1 second) {
+      case _: IOException =>
+        sendGetCounter() // try again
+        SupervisorStrategy.Restart
+      case _ => SupervisorStrategy.Stop
+    }
 }
 
 object CountRetriever {

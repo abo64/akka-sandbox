@@ -1,5 +1,6 @@
 package org.sandbox.akka.counts
 
+import java.io.IOException
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -102,6 +103,23 @@ class CountRetrieverSpec
     system.stop(retriever)
     eventually {
       assert(terminated)
+    }
+  }
+
+  it should "2.3 retry in case of IOException" in {
+    val ioUnsafeCountProvider = new CountProvider {
+      val calls = new AtomicInteger(0)
+      private def throwException =
+        calls.incrementAndGet % 3 == 0
+      override def getNext = {
+        if (throwException) throw new IOException("sorry!")
+        else super.getNext
+      }
+    }
+    val retriever = countRetriever(ioUnsafeCountProvider)
+    retriever ! GetCounters(42, 7)
+    within(2 seconds) {
+      expectMsg(Counters(42, Set(1,2,3,4,5,6,7)))
     }
   }
 

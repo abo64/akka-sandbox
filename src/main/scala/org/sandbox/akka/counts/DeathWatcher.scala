@@ -8,7 +8,7 @@ import akka.actor.Props
 class DeathWatcher(subject: ActorRef, onTermination: ActorRef => Unit) extends Actor {
   context.watch(subject)
 
-  def receive: Receive = {
+  override def receive: Receive = {
     case Terminated(terminated) => onTermination(terminated)
   }
 }
