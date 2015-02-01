@@ -77,7 +77,7 @@ class CountRetrieverSpec
 
   behavior of "Error Handling"
 
-  it should "2.1 throw a TimeoutException if case of timeout" in {
+  it should "2.1 throw a TimeoutException in case of timeout" in {
     val slowCountProvider = new CountProvider {
       override def getNext = {
         Thread.sleep(2000)
@@ -90,6 +90,18 @@ class CountRetrieverSpec
     future onFailure { case _: TimeoutException => gotTimeoutException = true }
     eventually {
       assert(gotTimeoutException)
+    }
+  }
+
+  it should "2.2 make DeatchWatcher work" in {
+    val retriever = countRetriever(new CountProvider {})
+    var terminated = false
+    def onTermination(subject: ActorRef) = if (subject == retriever) terminated = true
+    val deatchWatcher =
+      system.actorOf(DeathWatcher.props(retriever, onTermination), "deathWatcher")
+    system.stop(retriever)
+    eventually {
+      assert(terminated)
     }
   }
 
