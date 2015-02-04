@@ -3,9 +3,7 @@ package org.sandbox.akka.counts
 import java.io.IOException
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicInteger
-
 import scala.concurrent.duration.DurationInt
-
 import org.junit.runner.RunWith
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.Finders
@@ -13,9 +11,7 @@ import org.scalatest.FlatSpecLike
 import org.scalatest.Matchers
 import org.scalatest.concurrent.Eventually
 import org.scalatest.concurrent.IntegrationPatience
-
 import com.typesafe.config.ConfigFactory
-
 import CountRetriever.Counters
 import CountRetriever.GetCounters
 import akka.actor.ActorRef
@@ -26,11 +22,12 @@ import akka.pattern.ask
 import akka.testkit.DefaultTimeout
 import akka.testkit.ImplicitSender
 import akka.testkit.TestKit
+import scala.concurrent.duration.FiniteDuration
 
 @RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class CountRetrieverSpec
   extends TestKit(ActorSystem("CountRetrieverSpec", 
-      ConfigFactory.parseString("akka.loglevel=DEBUG").withFallback(ConfigFactory.load)))
+      ConfigFactory.parseString("akka.loglevel=WARNING").withFallback(ConfigFactory.load)))
   with ImplicitSender with DefaultTimeout
   with Matchers with FlatSpecLike with BeforeAndAfterAll with Eventually with IntegrationPatience
 {
@@ -78,7 +75,7 @@ class CountRetrieverSpec
 
   behavior of "Error Handling"
 
-  it should "2.1 throw a TimeoutException in case of timeout" in {
+  it should "2.1 send a TimeoutExpired message in case of timeout" in {
     val slowCountProvider = new CountProvider {
       override def getNext = {
         Thread.sleep(2000)
@@ -86,11 +83,10 @@ class CountRetrieverSpec
       }
     }
     val retriever = countRetriever(slowCountProvider)
-    val future = retriever ? GetCounters(42, 1, 500 millis)
-    var gotTimeoutException = false
-    future onFailure { case _: TimeoutException => gotTimeoutException = true }
-    eventually {
-      assert(gotTimeoutException)
+    val myTimeout = 500.millis
+    retriever ! GetCounters(42, 1, myTimeout)
+    within(1 second) {
+      expectMsg(TimeoutExpired(42, myTimeout))
     }
   }
 

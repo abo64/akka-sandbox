@@ -58,7 +58,7 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef) extends Ac
 
     implicit val executionContext = context.system.dispatcher
     def scheduleTimeout =
-      context.system.scheduler.scheduleOnce(timeout, self, TimeoutExpired(jobId))
+      context.system.scheduler.scheduleOnce(timeout, self, TimeoutExpired(jobId, timeout))
 
     var counters = Set.empty[Int]
     def collect: Receive = LoggingReceive {
@@ -69,9 +69,9 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef) extends Ac
           becomeWaiting
         }
       case _: GetCounters => stash
-      case TimeoutExpired(id) if id == jobId =>
+      case te@TimeoutExpired(id, _) if id == jobId =>
         becomeWaiting
-        throw new TimeoutException(s"jobId=$jobId: timeout after $timeout")
+        requestor ! te
     }
 
     scheduleTimeout
@@ -94,5 +94,5 @@ object CountRetriever {
   sealed trait CountRetrieverMsg
   case class GetCounters(jobId: Int, howMany: Int, timeout: FiniteDuration = 5 seconds) extends CountRetrieverMsg
   case class Counters(jobId: Int, counters: Set[Int]) extends CountRetrieverMsg
-  case class TimeoutExpired(jobId: Int)
+  case class TimeoutExpired(jobId: Int, timeout: FiniteDuration)
 }
