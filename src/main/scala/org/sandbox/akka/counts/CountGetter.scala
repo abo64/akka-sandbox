@@ -1,16 +1,15 @@
 package org.sandbox.akka.counts
 
-import scala.concurrent.Future
 import scala.concurrent.duration.DurationInt
+import scala.concurrent.duration.FiniteDuration
 
 import akka.actor.Actor
 import akka.actor.ActorRef
 import akka.actor.Props
-import akka.actor.Status.Failure
 import akka.actor.actorRef2Scala
 import akka.event.LoggingReceive
 import akka.pattern.CircuitBreaker
-import akka.pattern.pipe
+import akka.pattern.CircuitBreakerOpenException
 
 class CountGetter(countProvider: CountProvider) extends Actor {
   import CountGetter._
@@ -20,16 +19,28 @@ class CountGetter(countProvider: CountProvider) extends Actor {
   val circuitBreaker =
     new CircuitBreaker(context.system.scheduler,
       maxFailures = 5,
-      callTimeout = 10.seconds,
-      resetTimeout = 1.minute).onOpen(notifyMeOnOpen())
- 
-  def notifyMeOnOpen(): Unit =
-    println("My CircuitBreaker is now open, and will not close for one minute")
+      callTimeout = 10 seconds,
+      resetTimeout = 1 minute)
+        .onClose(onClose)
+
+  def onClose: Unit = {
+    openCircuitBreakerCalls foreach (_ ! CircuitBreakerClosed(self))
+    openCircuitBreakerCalls = Set()
+  }
+
+  var openCircuitBreakerCalls: Set[ActorRef] = Set()
 
   override def receive = LoggingReceive {
     case GetCounter(jobId) =>
-      val nextCounter = circuitBreaker.withSyncCircuitBreaker(countProvider.getNext)
-      sender ! Counter(jobId, nextCounter)
+      try {
+        val nextCounter = circuitBreaker.withSyncCircuitBreaker(countProvider.getNext)
+        sender ! Counter(jobId, nextCounter)
+      } catch {
+        case e: CircuitBreakerOpenException =>
+          openCircuitBreakerCalls += sender
+          sender ! CircuitBreakerOpen(self, e.remainingDuration)
+          throw e // supervisor is still in charge here
+      }
 //      val nextCounter = circuitBreaker.withCircuitBreaker(Future(countProvider.getNext))
 //      val counterMsg = nextCounter map(counter => (sender, Counter(jobId, counter)))
 //      counterMsg pipeTo self
@@ -45,4 +56,6 @@ object CountGetter {
   sealed trait CountGetterMsg
   case class GetCounter(jobId: Int) extends CountGetterMsg
   case class Counter(jobId: Int, counter: Int) extends CountGetterMsg
+  case class CircuitBreakerOpen(countGetter: ActorRef, howLong: FiniteDuration)
+  case class CircuitBreakerClosed(countGetter: ActorRef)
 }
