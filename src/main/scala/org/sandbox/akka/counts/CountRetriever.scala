@@ -1,7 +1,6 @@
 package org.sandbox.akka.counts
 
 import java.io.IOException
-import java.util.concurrent.TimeoutException
 
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.duration.FiniteDuration
