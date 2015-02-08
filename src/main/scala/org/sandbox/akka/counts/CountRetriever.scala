@@ -5,7 +5,7 @@ import java.io.IOException
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.duration.FiniteDuration
 
-import CountGetter.CircuitBreakerOpen
+import CircuitBreakerEnabled.CircuitBreakerOpen
 import CountGetter.Counter
 import CountGetter.GetCounter
 import akka.actor.Actor
