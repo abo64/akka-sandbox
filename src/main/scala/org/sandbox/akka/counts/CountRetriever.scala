@@ -1,10 +1,8 @@
 package org.sandbox.akka.counts
 
 import java.io.IOException
-
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.duration.FiniteDuration
-
 import CircuitBreakerEnabled.CircuitBreakerOpen
 import CountGetter.Counter
 import CountGetter.GetCounter
@@ -21,6 +19,8 @@ import akka.pattern.CircuitBreakerOpenException
 import akka.routing.ActorRefRoutee
 import akka.routing.RoundRobinRoutingLogic
 import akka.routing.Router
+import org.sandbox.akka.counts.CircuitBreakerEnabled.CircuitBreakerHalfOpen
+import org.sandbox.akka.counts.CircuitBreakerEnabled.CircuitBreakerClosed
 
 class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef) extends Actor with Stash {
   import CountRetriever._
@@ -65,9 +65,33 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef) extends Ac
       context.unbecome
     }
 
-    implicit val executionContext = context.system.dispatcher
-    def scheduleTimeout =
+    def scheduleTimeout = {
+      implicit val executionContext = context.system.dispatcher
       context.system.scheduler.scheduleOnce(timeout, self, TimeoutExpired(jobId, timeout))
+    }
+
+    def handleTimeout: Receive = {
+      case te@TimeoutExpired(id, _) if id == jobId =>
+        becomeWaiting
+        requestor ! te
+    }
+
+    def handleCircuitBreaker: Receive = {
+      def addRoutee(routee: ActorRef): Unit = {
+        val addRoutee =
+          router map (_.routees.contains(ActorRefRoutee(routee))) getOrElse (false)
+        if (addRoutee)
+          router = router map (_.addRoutee(routee))
+      }
+      def removeRoutee(routee: ActorRef): Unit =
+        router = router map (_.removeRoutee(routee))
+
+      {
+        case CircuitBreakerOpen(countGetter, howLong) => removeRoutee(countGetter)
+        case CircuitBreakerHalfOpen(countGetter) => addRoutee(countGetter)
+        case CircuitBreakerClosed(countGetter) => addRoutee(countGetter)
+      }
+    }
 
     var counters = Set.empty[Int]
     def collect: Receive = LoggingReceive {
@@ -78,27 +102,10 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef) extends Ac
           becomeWaiting
         }
       case _: GetCounters => stash
-      case te@TimeoutExpired(id, _) if id == jobId =>
-        becomeWaiting
-        requestor ! te
-      case CircuitBreakerOpen(countGetter, howLong) =>
-        router = router map { oldRouter =>
-//          val isRoutee = r.routees.contains(ActorRefRoutee(countGetter))
-          val newRouter = oldRouter.removeRoutee(countGetter)
-          val routeeRemoved = (oldRouter.routees.size > newRouter.routees.size)
-          if (routeeRemoved)
-            context.system.scheduler.scheduleOnce(howLong, self, AddRoutee(countGetter))
-          newRouter
-        }
-      case AddRoutee(countGetter) =>
-        val addRoutee =
-          router map (_.routees.contains(ActorRefRoutee(countGetter))) getOrElse(false)
-        if (addRoutee)
-          router = router map (_.addRoutee(countGetter))
     }
 
     scheduleTimeout
-    collect
+    collect orElse handleTimeout orElse handleCircuitBreaker
   }
 
   override val supervisorStrategy =
@@ -120,5 +127,4 @@ object CountRetriever {
   case class GetCounters(jobId: Int, howMany: Int, timeout: FiniteDuration = 5 seconds) extends CountRetrieverMsg
   case class Counters(jobId: Int, counters: Set[Int]) extends CountRetrieverMsg
   case class TimeoutExpired(jobId: Int, timeout: FiniteDuration) extends CountRetrieverMsg
-  case class AddRoutee(routee: ActorRef) extends CountRetrieverMsg
 }

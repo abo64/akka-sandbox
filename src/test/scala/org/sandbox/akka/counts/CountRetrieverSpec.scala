@@ -27,7 +27,7 @@ import scala.concurrent.duration.FiniteDuration
 @RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class CountRetrieverSpec
   extends TestKit(ActorSystem("CountRetrieverSpec", 
-      ConfigFactory.parseString("akka.loglevel=WARNING").withFallback(ConfigFactory.load)))
+      ConfigFactory.parseString("akka.loglevel=DEBUG").withFallback(ConfigFactory.load)))
   with ImplicitSender with DefaultTimeout
   with Matchers with FlatSpecLike with BeforeAndAfterAll with Eventually with IntegrationPatience
 {

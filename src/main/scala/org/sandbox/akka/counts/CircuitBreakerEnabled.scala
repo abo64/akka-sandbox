@@ -20,12 +20,17 @@ trait CircuitBreakerEnabled extends Actor {
       callTimeout = 10 seconds,
       resetTimeout = 1 minute)
         .onClose(onClose)
+        .onHalfOpen(onHalfOpen)
 
   private var openCircuitBreakerCalls: Set[ActorRef] = Set()
 
   private def onClose: Unit = {
     openCircuitBreakerCalls foreach (_ ! CircuitBreakerClosed(self))
     openCircuitBreakerCalls = Set()
+  }
+
+  private def onHalfOpen: Unit = {
+    openCircuitBreakerCalls foreach (_ ! CircuitBreakerHalfOpen(self))
   }
 
   def withSyncCircuitBreaker[T](body: ⇒ T): T =
@@ -44,4 +49,5 @@ object CircuitBreakerEnabled {
   sealed trait CircuitBreakerEnabledMsg
   case class CircuitBreakerOpen(countGetter: ActorRef, howLong: FiniteDuration) extends CircuitBreakerEnabledMsg
   case class CircuitBreakerClosed(countGetter: ActorRef) extends CircuitBreakerEnabledMsg
+  case class CircuitBreakerHalfOpen(countGetter: ActorRef) extends CircuitBreakerEnabledMsg
 }
