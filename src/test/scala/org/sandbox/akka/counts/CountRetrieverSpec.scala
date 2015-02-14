@@ -1,9 +1,11 @@
 package org.sandbox.akka.counts
 
 import java.io.IOException
-import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicInteger
+
+import scala.annotation.implicitNotFound
 import scala.concurrent.duration.DurationInt
+
 import org.junit.runner.RunWith
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.Finders
@@ -11,23 +13,28 @@ import org.scalatest.FlatSpecLike
 import org.scalatest.Matchers
 import org.scalatest.concurrent.Eventually
 import org.scalatest.concurrent.IntegrationPatience
+
 import com.typesafe.config.ConfigFactory
+
+import CountGetter.Counter
 import CountRetriever.Counters
 import CountRetriever.GetCounters
+import CountRetriever.TimeoutExpired
 import akka.actor.ActorRef
 import akka.actor.ActorRefFactory
 import akka.actor.ActorSystem
+import akka.actor.Props
 import akka.actor.actorRef2Scala
 import akka.pattern.ask
+import akka.persistence.PersistentView
 import akka.testkit.DefaultTimeout
 import akka.testkit.ImplicitSender
 import akka.testkit.TestKit
-import scala.concurrent.duration.FiniteDuration
 
 @RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class CountRetrieverSpec
   extends TestKit(ActorSystem("CountRetrieverSpec", 
-      ConfigFactory.parseString("akka.loglevel=DEBUG").withFallback(ConfigFactory.load)))
+      ConfigFactory.parseString("akka.loglevel=WARNING").withFallback(ConfigFactory.load)))
   with ImplicitSender with DefaultTimeout
   with Matchers with FlatSpecLike with BeforeAndAfterAll with Eventually with IntegrationPatience
 {
@@ -119,13 +126,43 @@ class CountRetrieverSpec
     }
   }
 
+  behavior of "Persistence"
+
+  class TestView(val persistenceId: String, val viewId: String) extends PersistentView {
+    var persistentMessages: Seq[Counter] = Seq()
+
+    override def receive: Receive = {
+      case msg: Counter if isPersistent => persistentMessages = persistentMessages :+ msg
+      case "GetMessages" => sender ! persistentMessages
+    }
+  }
+
+  private trait Persistence { persistence =>
+    val simpleCountProvider = new CountProvider {}
+    val persistenceId = "bollocks"
+    val retriever = countRetriever(simpleCountProvider, persistenceId)
+    val persistentViewActor = system.actorOf(Props(new TestView(persistenceId, "bollocks")))
+  }
+
+  it should "3.1 persist all Counter messages" in new Persistence {
+    retriever ! GetCounters(666, 7)
+    val expectedMsgs = ((1 to 7) map (Counter(666, _))).toSet
+    eventually {
+      var gotAllCounters = false
+      val messages = persistentViewActor.ask("GetMessages").mapTo[Seq[Counter]]
+      messages onSuccess { case msgs =>
+        gotAllCounters = msgs.toSet == expectedMsgs
+      }
+    }
+  }
+
   private val retrieverCount = new AtomicInteger(0)
   private val getterCount = new AtomicInteger(0)
-  private def countRetriever(countProvider: CountProvider): ActorRef = {
+  private def countRetriever(countProvider: CountProvider, persistenceId: String = "countretriever"): ActorRef = {
 
     def countGetter(factory: ActorRefFactory): ActorRef =
       factory.actorOf(CountGetter.props(countProvider), s"countGetter-${getterCount.incrementAndGet}")
 
-    system.actorOf(CountRetriever.props(countGetter), s"countRetriever-${retrieverCount.incrementAndGet}")
+    system.actorOf(CountRetriever.props(countGetter, persistenceId), s"countRetriever-${retrieverCount.incrementAndGet}")
   }
 }
