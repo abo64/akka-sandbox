@@ -105,7 +105,7 @@ class CountRetrieverSpec
     }
   }
 
-  it should "2.2 make DeatchWatcher work" in {
+  it should "2.2 make DeathWatcher work" in {
     val retriever = countRetriever("2.2", new CountProvider {})
     var terminated = false
     def onTermination(subject: ActorRef) = if (subject == retriever) terminated = true
@@ -144,9 +144,9 @@ class CountRetrieverSpec
 
     override def receive: Receive = {
       case msg: Counter =>
-        println(s"view for $persistenceId: received $msg")
+//        println(s"view for $persistenceId: received $msg")
         persistentMessages += msg
-        println(s"$persistentMessages ${condition(persistentMessages)}")
+//        println(s"$persistentMessages ${condition(persistentMessages)}")
         if (condition(persistentMessages)) onTrue
     }
   }
@@ -182,7 +182,9 @@ class CountRetrieverSpec
         case (props: Props, name: String) => sender ! context.actorOf(props, name)
       }
       override val supervisorStrategy = OneForOneStrategy() {
-        case _: Exception => SupervisorStrategy.Restart
+        case _: Exception =>
+          println(s"restarter: restarting ${context.children}")
+          SupervisorStrategy.Restart
       }
     }
     val restarter = system.actorOf(Props(new Restarter), "restarter")

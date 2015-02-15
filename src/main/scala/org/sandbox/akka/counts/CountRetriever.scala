@@ -1,11 +1,14 @@
 package org.sandbox.akka.counts
 
 import java.io.IOException
+
 import scala.annotation.implicitNotFound
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.duration.FiniteDuration
+
 import org.sandbox.akka.counts.CircuitBreakerEnabled.CircuitBreakerClosed
 import org.sandbox.akka.counts.CircuitBreakerEnabled.CircuitBreakerHalfOpen
+
 import CircuitBreakerEnabled.CircuitBreakerOpen
 import CountGetter.Counter
 import CountGetter.GetCounter
@@ -19,15 +22,14 @@ import akka.actor.actorRef2Scala
 import akka.event.LoggingReceive
 import akka.pattern.CircuitBreakerOpenException
 import akka.persistence.PersistentActor
+import akka.persistence.RecoveryCompleted
+import akka.persistence.SnapshotOffer
 import akka.routing.ActorRefRoutee
 import akka.routing.RoundRobinRoutingLogic
 import akka.routing.Router
-import akka.persistence.RecoveryCompleted
-import akka.persistence.SnapshotOffer
 
 class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef, val persistenceId: String)
-  extends PersistentActor with Stash
-{
+  extends PersistentActor with Stash {
   import CountRetriever._
   import CountGetter._
 
@@ -65,29 +67,26 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef, val persis
   }
 
   override def receiveRecover: Receive = {
-    case SnapshotOffer(_, snapshot: Option[JobResult]) =>
-      println(s"SnapshotOffer for ${self.path.name}: $snapshot")
-      jobResult = snapshot
+//    case SnapshotOffer(_, snapshot: Option[JobResult]) =>
+//      println(s"SnapshotOffer for ${self.path.name}: $snapshot")
+//      jobResult = snapshot
+    case jobResult: JobResult =>
+      println(s"jobResult for ${self.path.name}: $jobResult")
+      setJobResult(jobResult)
     case counter: Counter =>
       println(s"recover for ${self.path.name}: $counter")
       handleCounter(counter)
     case RecoveryCompleted => println(s"RecoveryCompleted for ${self.path.name}: $jobResult")
+    case x => println(s"unhandled recover for ${self.path.name}: $x")
   }
 
-//  override def preRestart(reason: Throwable, message: Option[Any]) = {
-//    super.preRestart(reason, message)
-//  }
+  //  override def preRestart(reason: Throwable, message: Option[Any]) = {
+  //    super.preRestart(reason, message)
+  //  }
 
   private def createCountGetter: ActorRef = countGetterFactory(context)
 
   private var router: Option[Router] = None
-
-  def initRouter(jobId: Int, howMany: Int): Unit = {
-    def getCountGetters: Vector[ActorRef] =
-      Vector.tabulate(howMany min 20)(_ => createCountGetter)
-    val countGetters = getCountGetters map ActorRefRoutee
-    router = Some(Router(RoundRobinRoutingLogic(), countGetters))
-  }
 
   private def sendGetCounter: Unit =
     for {
@@ -95,68 +94,81 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef, val persis
       jr <- jobResult
     } r.route(GetCounter(jr.jobId), self)
 
+  private def setJobResult(jobResult: JobResult): Unit = {
+    def initRouter(jobId: Int, howMany: Int): Unit = {
+      def getCountGetters: Vector[ActorRef] =
+        Vector.tabulate(howMany min 20)(_ => createCountGetter)
+      val countGetters = getCountGetters map ActorRefRoutee
+      router = Some(Router(RoundRobinRoutingLogic(), countGetters))
+    }
+
+    this.jobResult = Some(jobResult)
+    val JobResult(jobId, howMany, _, counters) = jobResult
+    initRouter(jobId, howMany - counters.size)
+  }
+
   private def waiting: Receive = LoggingReceive {
     {
       case GetCounters(jobId, howMany, timeout) =>
-        initRouter(jobId, howMany)
-        jobResult = Some(JobResult(jobId, howMany, sender))
-        saveSnapshot(jobResult)
+        val jobResult = JobResult(jobId, howMany, sender)
+        setJobResult(jobResult)
+//        persist(jobResult)(setJobResult)
+//        saveSnapshot(jobResult)
         context.become(collectCounts(jobId, sender, timeout))
         (1 to howMany) foreach (_ => sendGetCounter)
     }
   }
 
   private def collectCounts(jobId: Int, requestor: ActorRef,
-      timeout: FiniteDuration): Receive =
-  {
-    def scheduleTimeout = {
-      implicit val executionContext = context.system.dispatcher
-      context.system.scheduler.scheduleOnce(timeout, self, TimeoutExpired(jobId, timeout))
-    }
-
-    def handleTimeout: Receive = {
-      case te@TimeoutExpired(id, _) if id == jobId =>
-        becomeWaiting
-        requestor ! te
-    }
-
-    def handleCircuitBreaker: Receive = {
-      def addRoutee(routee: ActorRef): Unit = {
-        val addRoutee =
-          router map (_.routees.contains(ActorRefRoutee(routee))) getOrElse (false)
-        if (addRoutee)
-          router = router map (_.addRoutee(routee))
+    timeout: FiniteDuration): Receive =
+    {
+      def scheduleTimeout = {
+        implicit val executionContext = context.system.dispatcher
+        context.system.scheduler.scheduleOnce(timeout, self, TimeoutExpired(jobId, timeout))
       }
-      def removeRoutee(routee: ActorRef): Unit =
-        router = router map (_.removeRoutee(routee))
 
-      {
-        case CircuitBreakerOpen(countGetter, howLong) => removeRoutee(countGetter)
-        case CircuitBreakerHalfOpen(countGetter) => addRoutee(countGetter)
-        case CircuitBreakerClosed(countGetter) => addRoutee(countGetter)
+      def handleTimeout: Receive = {
+        case te @ TimeoutExpired(id, _) if id == jobId =>
+          becomeWaiting
+          requestor ! te
       }
-    }
 
-    def collect: Receive = LoggingReceive {
-      handleCounter orElse stashIt
-    }
+      def handleCircuitBreaker: Receive = {
+        def addRoutee(routee: ActorRef): Unit = {
+          val addRoutee =
+            router map (_.routees.contains(ActorRefRoutee(routee))) getOrElse (false)
+          if (addRoutee)
+            router = router map (_.addRoutee(routee))
+        }
+        def removeRoutee(routee: ActorRef): Unit =
+          router = router map (_.removeRoutee(routee))
 
-    def stashIt: Receive = {
-      case _: GetCounters => stash
-    }
+        {
+          case CircuitBreakerOpen(countGetter, howLong) => removeRoutee(countGetter)
+          case CircuitBreakerHalfOpen(countGetter) => addRoutee(countGetter)
+          case CircuitBreakerClosed(countGetter) => addRoutee(countGetter)
+        }
+      }
 
-    scheduleTimeout
-    collect orElse handleTimeout orElse handleCircuitBreaker
-  }
+      def collect: Receive = LoggingReceive {
+        handleCounter orElse stashIt
+      }
+
+      def stashIt: Receive = {
+        case _: GetCounters => stash
+      }
+
+      scheduleTimeout
+      collect orElse handleTimeout orElse handleCircuitBreaker
+    }
 
   override val supervisorStrategy =
     OneForOneStrategy(maxNrOfRetries = 3, withinTimeRange = 1 second) {
       case _: IOException =>
         sendGetCounter // try again
         SupervisorStrategy.Restart
-      case e: CircuitBreakerOpenException =>
-        SupervisorStrategy.Resume
-      case _ => SupervisorStrategy.Stop
+      case e: CircuitBreakerOpenException => SupervisorStrategy.Resume
+      case _ => SupervisorStrategy.Escalate
     }
 }
 
