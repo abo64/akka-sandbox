@@ -2,8 +2,11 @@ package org.sandbox.akka.counts
 
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicInteger
+
 import scala.annotation.implicitNotFound
+import scala.concurrent.Await
 import scala.concurrent.duration.DurationInt
+
 import org.junit.runner.RunWith
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.Finders
@@ -11,7 +14,9 @@ import org.scalatest.FlatSpecLike
 import org.scalatest.Matchers
 import org.scalatest.concurrent.Eventually
 import org.scalatest.concurrent.IntegrationPatience
+
 import com.typesafe.config.ConfigFactory
+
 import CountGetter.Counter
 import CountRetriever.Counters
 import CountRetriever.GetCounters
@@ -28,9 +33,7 @@ import akka.pattern.ask
 import akka.persistence.PersistentView
 import akka.testkit.DefaultTimeout
 import akka.testkit.ImplicitSender
-import akka.testkit.TestActorRef
 import akka.testkit.TestKit
-import scala.concurrent.Await
 
 @RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class CountRetrieverSpec
@@ -48,11 +51,13 @@ class CountRetrieverSpec
   implicit val ec = system.dispatcher
 
   private trait HappyPath {
+    val testName: String
     val simpleCountProvider = new CountProvider {}
-    val retriever = countRetriever(simpleCountProvider)
+    lazy val retriever = countRetriever(testName, simpleCountProvider)
   }
 
   it should "1.1 retrieve a single Count" in new HappyPath {
+    override val testName = "1.1"
     retriever ! GetCounters(42, 1)
     within(500 millis) {
       expectMsg(Counters(42, Set(1)))
@@ -60,6 +65,7 @@ class CountRetrieverSpec
   }
 
   it should "1.2 retrieve multiple Counts" in new HappyPath {
+    override val testName = "1.2"
     retriever ! GetCounters(42, 5)
     within(500 millis) {
       expectMsg(Counters(42, Set(1, 2, 3, 4, 5)))
@@ -67,6 +73,7 @@ class CountRetrieverSpec
   }
 
   it should "1.3 handle simultaneous GetCounters requests" in new HappyPath {
+    override val testName = "1.3"
     val requests = (1 to 5) map(i => GetCounters(i, 5))
     val counters = (1 to 5) map(i => Counters(i, Set(1, 2, 3, 4, 5)))
     requests.par foreach (retriever ! _)
@@ -90,7 +97,7 @@ class CountRetrieverSpec
         super.getNext
       }
     }
-    val retriever = countRetriever(slowCountProvider)
+    val retriever = countRetriever("2.1", slowCountProvider)
     val myTimeout = 500.millis
     retriever ! GetCounters(42, 1, myTimeout)
     within(1 second) {
@@ -99,7 +106,7 @@ class CountRetrieverSpec
   }
 
   it should "2.2 make DeatchWatcher work" in {
-    val retriever = countRetriever(new CountProvider {})
+    val retriever = countRetriever("2.2", new CountProvider {})
     var terminated = false
     def onTermination(subject: ActorRef) = if (subject == retriever) terminated = true
     val deatchWatcher =
@@ -120,7 +127,7 @@ class CountRetrieverSpec
         else super.getNext
       }
     }
-    val retriever = countRetriever(ioUnsafeCountProvider)
+    val retriever = countRetriever("2.3", ioUnsafeCountProvider)
     retriever ! GetCounters(42, 7)
     within(2 seconds) {
       expectMsg(Counters(42, Set(1,2,3,4,5,6,7)))
@@ -136,19 +143,18 @@ class CountRetrieverSpec
     var persistentMessages: Set[Counter] = Set()
 
     override def receive: Receive = {
-      case msg: Counter if isPersistent =>
+      case msg: Counter =>
+        println(s"view for $persistenceId: received $msg")
         persistentMessages += msg
+        println(s"$persistentMessages ${condition(persistentMessages)}")
         if (condition(persistentMessages)) onTrue
     }
   }
 
-  private trait Persistence { persistence =>
+  it should "3.1 persist all Counter messages" in{
     val simpleCountProvider = new CountProvider {}
-    val persistenceId = "bollocks"
-    val retriever = countRetriever(simpleCountProvider, Some(persistenceId))
-  }
-
-  it should "3.1 persist all Counter messages" in new Persistence {
+    val persistenceId = s"persist-3.1-${System.currentTimeMillis}"
+    val retriever = countRetriever("3.1", simpleCountProvider, Some(persistenceId))
     retriever ! GetCounters(666, 7)
     val expectedMsgs = ((1 to 7) map (Counter(666, _))).toSet
     var gotAllCounters = false
@@ -156,8 +162,8 @@ class CountRetrieverSpec
       system.actorOf(Props(new TestView(persistenceId, s"$persistenceId-view",
           _ == expectedMsgs, gotAllCounters = true)))
     eventually {
-      expectMsg(Counters(666, Set(1,2,3,4,5,6,7)))
       assert(gotAllCounters)
+      expectMsg(Counters(666, Set(1,2,3,4,5,6,7)))
     }
   }
 
@@ -180,7 +186,7 @@ class CountRetrieverSpec
       }
     }
     val restarter = system.actorOf(Props(new Restarter), "restarter")
-    val propsAndName = countRetrieverProps(unsafeCountProvider, Some("recover-me"))
+    val propsAndName = countRetrieverProps("3.2", unsafeCountProvider, Some("recover-me"))
     val retriever =
       Await.result(restarter ? propsAndName, 1 second).asInstanceOf[ActorRef]
     retriever ! GetCounters(77, 7)
@@ -191,15 +197,15 @@ class CountRetrieverSpec
 
   private val retrieverCount = new AtomicInteger(0)
   private val getterCount = new AtomicInteger(0)
-  private def countRetrieverProps(countProvider: CountProvider, persistenceId: Option[String] = None): (Props,String) = {
+  private def countRetrieverProps(testName: String, countProvider: CountProvider, persistenceId: Option[String] = None): (Props,String) = {
     def countGetter(factory: ActorRefFactory): ActorRef =
       factory.actorOf(CountGetter.props(countProvider), s"countGetter-${getterCount.incrementAndGet}")
 
-    val name = s"countRetriever-${retrieverCount.incrementAndGet}"
+    val name = s"countRetriever-$testName-${System.currentTimeMillis}"
     (CountRetriever.props(countGetter, persistenceId getOrElse s"$name-persistence"), name)
   }
-  private def countRetriever(countProvider: CountProvider, persistenceId: Option[String] = None): ActorRef = {
-    val (props, name) = countRetrieverProps(countProvider, persistenceId)
+  private def countRetriever(testName: String, countProvider: CountProvider, persistenceId: Option[String] = None): ActorRef = {
+    val (props, name) = countRetrieverProps(testName, countProvider, persistenceId)
     system.actorOf(props, name)
   }
 }

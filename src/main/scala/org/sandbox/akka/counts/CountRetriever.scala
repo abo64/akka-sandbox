@@ -33,7 +33,7 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef, val persis
 
   override def receiveCommand: Receive = waiting
 
-  case class JobResult(jobId: Int, howMany: Int, requester: ActorRef, counters: Set[Int] = Set()) {
+  case class JobResult(jobId: Int, howMany: Int, requestor: ActorRef, counters: Set[Int] = Set()) {
     def updated(counter: Counter): JobResult =
       if (counter.jobId == jobId) copy(counters = counters + counter.counter) else this
     def isComplete = counters.size >= howMany
@@ -46,7 +46,7 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef, val persis
       jobResult = jobResult map (_.updated(counter))
       jobResult foreach { jr =>
         if (jr.isComplete) {
-          jr.requester ! Counters(jr.jobId, jr.counters)
+          jr.requestor ! Counters(jr.jobId, jr.counters)
           becomeWaiting
         }
       }
@@ -66,12 +66,12 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef, val persis
 
   override def receiveRecover: Receive = {
     case SnapshotOffer(_, snapshot: Option[JobResult]) =>
-      println(s"SnapshotOffer: $snapshot")
+      println(s"SnapshotOffer for ${self.path.name}: $snapshot")
       jobResult = snapshot
     case counter: Counter =>
-      println(s"recover: $counter")
+      println(s"recover for ${self.path.name}: $counter")
       handleCounter(counter)
-    case RecoveryCompleted => println(s"RecoveryCompleted: $jobResult")
+    case RecoveryCompleted => println(s"RecoveryCompleted for ${self.path.name}: $jobResult")
   }
 
 //  override def preRestart(reason: Throwable, message: Option[Any]) = {
@@ -106,7 +106,7 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef, val persis
     }
   }
 
-  private def collectCounts(jobId: Int, requester: ActorRef,
+  private def collectCounts(jobId: Int, requestor: ActorRef,
       timeout: FiniteDuration): Receive =
   {
     def scheduleTimeout = {
@@ -117,7 +117,7 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef, val persis
     def handleTimeout: Receive = {
       case te@TimeoutExpired(id, _) if id == jobId =>
         becomeWaiting
-        requester ! te
+        requestor ! te
     }
 
     def handleCircuitBreaker: Receive = {
