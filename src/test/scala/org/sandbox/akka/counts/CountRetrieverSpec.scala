@@ -128,12 +128,16 @@ class CountRetrieverSpec
 
   behavior of "Persistence"
 
-  class TestView(val persistenceId: String, val viewId: String) extends PersistentView {
-    var persistentMessages: Seq[Counter] = Seq()
+  class TestView(val persistenceId: String, val viewId: String,
+      condition: Set[Counter] => Boolean, onTrue: => Unit)
+    extends PersistentView
+  {
+    var persistentMessages: Set[Counter] = Set()
 
     override def receive: Receive = {
-      case msg: Counter if isPersistent => persistentMessages = persistentMessages :+ msg
-      case "GetMessages" => sender ! persistentMessages
+      case msg: Counter if isPersistent =>
+        persistentMessages += msg
+        if (condition(persistentMessages)) onTrue
     }
   }
 
@@ -141,18 +145,17 @@ class CountRetrieverSpec
     val simpleCountProvider = new CountProvider {}
     val persistenceId = "bollocks"
     val retriever = countRetriever(simpleCountProvider, persistenceId)
-    val persistentViewActor = system.actorOf(Props(new TestView(persistenceId, "bollocks")))
   }
 
   it should "3.1 persist all Counter messages" in new Persistence {
     retriever ! GetCounters(666, 7)
     val expectedMsgs = ((1 to 7) map (Counter(666, _))).toSet
+    var gotAllCounters = false
+    val persistentViewActor =
+      system.actorOf(Props(new TestView(persistenceId, s"$persistenceId-view",
+          _ == expectedMsgs, gotAllCounters = true)))
     eventually {
-      var gotAllCounters = false
-      val messages = persistentViewActor.ask("GetMessages").mapTo[Seq[Counter]]
-      messages onSuccess { case msgs =>
-        gotAllCounters = msgs.toSet == expectedMsgs
-      }
+      assert(gotAllCounters)
     }
   }
 
