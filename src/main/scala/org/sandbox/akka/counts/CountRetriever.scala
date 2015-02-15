@@ -1,14 +1,11 @@
 package org.sandbox.akka.counts
 
 import java.io.IOException
-
 import scala.annotation.implicitNotFound
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.duration.FiniteDuration
-
 import org.sandbox.akka.counts.CircuitBreakerEnabled.CircuitBreakerClosed
 import org.sandbox.akka.counts.CircuitBreakerEnabled.CircuitBreakerHalfOpen
-
 import CircuitBreakerEnabled.CircuitBreakerOpen
 import CountGetter.Counter
 import CountGetter.GetCounter
@@ -25,6 +22,8 @@ import akka.persistence.PersistentActor
 import akka.routing.ActorRefRoutee
 import akka.routing.RoundRobinRoutingLogic
 import akka.routing.Router
+import akka.persistence.RecoveryCompleted
+import akka.persistence.SnapshotOffer
 
 class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef, val persistenceId: String)
   extends PersistentActor with Stash
@@ -66,8 +65,18 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef, val persis
   }
 
   override def receiveRecover: Receive = {
-    case _ =>
+    case SnapshotOffer(_, snapshot: Option[JobResult]) =>
+      println(s"SnapshotOffer: $snapshot")
+      jobResult = snapshot
+    case counter: Counter =>
+      println(s"recover: $counter")
+      handleCounter(counter)
+    case RecoveryCompleted => println(s"RecoveryCompleted: $jobResult")
   }
+
+//  override def preRestart(reason: Throwable, message: Option[Any]) = {
+//    super.preRestart(reason, message)
+//  }
 
   private def createCountGetter: ActorRef = countGetterFactory(context)
 
@@ -91,6 +100,7 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef, val persis
       case GetCounters(jobId, howMany, timeout) =>
         initRouter(jobId, howMany)
         jobResult = Some(JobResult(jobId, howMany, sender))
+        saveSnapshot(jobResult)
         context.become(collectCounts(jobId, sender, timeout))
         (1 to howMany) foreach (_ => sendGetCounter)
     }

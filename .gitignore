@@ -18,3 +18,4 @@ target/
 .worksheet
 bin
 /journal
+/snapshots
