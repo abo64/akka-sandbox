@@ -35,11 +35,13 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef, val persis
 
   override def receiveCommand: Receive = waiting
 
-  case class JobResult(jobId: Int, howMany: Int, requestor: ActorRef, counters: Set[Int] = Set()) {
+  case class JobResult(jobId: Int, howMany: Int, timeout: FiniteDuration, requestor: ActorRef, counters: Set[Int] = Set()) {
     def updated(counter: Counter): JobResult =
       if (counter.jobId == jobId) copy(counters = counters + counter.counter) else this
     def isComplete = counters.size >= howMany
   }
+
+//  override def preStart: Unit = {} // do not try to recover at Start time
 
   var jobResult: Option[JobResult] = None
 
@@ -76,7 +78,9 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef, val persis
     case counter: Counter =>
       println(s"recover for ${self.path.name}: $counter")
       handleCounter(counter)
-    case RecoveryCompleted => println(s"RecoveryCompleted for ${self.path.name}: $jobResult")
+    case RecoveryCompleted =>
+      println(s"RecoveryCompleted for ${self.path.name}: $jobResult")
+      context.become(waiting)
     case x => println(s"unhandled recover for ${self.path.name}: $x")
   }
 
@@ -103,14 +107,14 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef, val persis
     }
 
     this.jobResult = Some(jobResult)
-    val JobResult(jobId, howMany, _, counters) = jobResult
+    val JobResult(jobId, howMany, _, _, counters) = jobResult
     initRouter(jobId, howMany - counters.size)
   }
 
   private def waiting: Receive = LoggingReceive {
     {
       case GetCounters(jobId, howMany, timeout) =>
-        val jobResult = JobResult(jobId, howMany, sender)
+        val jobResult = JobResult(jobId, howMany, timeout, sender)
         setJobResult(jobResult)
 //        persist(jobResult)(setJobResult)
 //        saveSnapshot(jobResult)
