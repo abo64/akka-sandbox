@@ -1,14 +1,11 @@
 package org.sandbox.akka.counts
 
 import java.io.IOException
-
 import scala.annotation.implicitNotFound
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.duration.FiniteDuration
-
 import org.sandbox.akka.counts.CircuitBreakerEnabled.CircuitBreakerClosed
 import org.sandbox.akka.counts.CircuitBreakerEnabled.CircuitBreakerHalfOpen
-
 import CircuitBreakerEnabled.CircuitBreakerOpen
 import CountGetter.Counter
 import CountGetter.GetCounter
@@ -27,19 +24,23 @@ import akka.persistence.SnapshotOffer
 import akka.routing.ActorRefRoutee
 import akka.routing.RoundRobinRoutingLogic
 import akka.routing.Router
+import akka.actor.ActorPath
+import scala.concurrent.Await
 
 class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef, val persistenceId: String)
   extends PersistentActor with Stash {
   import CountRetriever._
   import CountGetter._
 
-  override def receiveCommand: Receive = waiting
-
-  case class JobResult(jobId: Int, howMany: Int, timeout: FiniteDuration, requestor: ActorRef, counters: Set[Int] = Set()) {
-    def updated(counter: Counter): JobResult =
-      if (counter.jobId == jobId) copy(counters = counters + counter.counter) else this
-    def isComplete = counters.size >= howMany
-  }
+  override def receiveCommand: Receive =
+    jobResult map { jr =>
+      setJobResult(jr)
+      println(s"receiveCommand: $jobResult")
+      collectCounts(jr.jobId, jr.requestor, jr.timeout)
+    } getOrElse {
+      println("switching to waiting")
+      waiting
+    }
 
 //  override def preStart: Unit = {} // do not try to recover at Start time
 
@@ -72,6 +73,7 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef, val persis
 //    case SnapshotOffer(_, snapshot: Option[JobResult]) =>
 //      println(s"SnapshotOffer for ${self.path.name}: $snapshot")
 //      jobResult = snapshot
+//      jobResult foreach setJobResult
     case jobResult: JobResult =>
       println(s"jobResult for ${self.path.name}: $jobResult")
       setJobResult(jobResult)
@@ -80,7 +82,7 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef, val persis
       handleCounter(counter)
     case RecoveryCompleted =>
       println(s"RecoveryCompleted for ${self.path.name}: $jobResult")
-      context.become(waiting)
+//      if (jobResult.isEmpty) context.become(waiting)
     case x => println(s"unhandled recover for ${self.path.name}: $x")
   }
 
@@ -99,33 +101,40 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef, val persis
     } r.route(GetCounter(jr.jobId), self)
 
   private def setJobResult(jobResult: JobResult): Unit = {
-    def initRouter(jobId: Int, howMany: Int): Unit = {
+    def getRouter(jobId: Int, howMany: Int): Router = {
       def getCountGetters: Vector[ActorRef] =
         Vector.tabulate(howMany min 20)(_ => createCountGetter)
       val countGetters = getCountGetters map ActorRefRoutee
-      router = Some(Router(RoundRobinRoutingLogic(), countGetters))
+      Router(RoundRobinRoutingLogic(), countGetters)
     }
 
     this.jobResult = Some(jobResult)
-    val JobResult(jobId, howMany, _, _, counters) = jobResult
-    initRouter(jobId, howMany - counters.size)
+    if (router.isEmpty) {
+      val JobResult(jobId, howMany, timeout, _, counters) = jobResult
+      router = Some(getRouter(jobId, howMany - counters.size))
+    }
+//    context.become(collectCounts(jobId, sender, timeout))
   }
 
   private def waiting: Receive = LoggingReceive {
     {
       case GetCounters(jobId, howMany, timeout) =>
         val jobResult = JobResult(jobId, howMany, timeout, sender)
-        setJobResult(jobResult)
-//        persist(jobResult)(setJobResult)
+//        setJobResult(jobResult)
+//        println(s"waiting1: router=$router jobResult=$jobResult")
+        persist(jobResult) { jr =>
+          setJobResult(jr)
+          context.become(collectCounts(jobId, sender, timeout))
+         (1 to howMany) foreach (_ => sendGetCounter)
+        }
 //        saveSnapshot(jobResult)
-        context.become(collectCounts(jobId, sender, timeout))
-        (1 to howMany) foreach (_ => sendGetCounter)
     }
   }
 
   private def collectCounts(jobId: Int, requestor: ActorRef,
-    timeout: FiniteDuration): Receive =
+    timeout: FiniteDuration): Receive = LoggingReceive
     {
+      println(s"switching to collectCounts: $jobResult")
       def scheduleTimeout = {
         implicit val executionContext = context.system.dispatcher
         context.system.scheduler.scheduleOnce(timeout, self, TimeoutExpired(jobId, timeout))
@@ -184,4 +193,12 @@ object CountRetriever {
   case class GetCounters(jobId: Int, howMany: Int, timeout: FiniteDuration = 5 seconds) extends CountRetrieverMsg
   case class Counters(jobId: Int, counters: Set[Int]) extends CountRetrieverMsg
   case class TimeoutExpired(jobId: Int, timeout: FiniteDuration) extends CountRetrieverMsg
+
+  
+  case class JobResult(jobId: Int, howMany: Int, timeout: FiniteDuration, requestor: ActorRef, counters: Set[Int] = Set()) {
+    def updated(counter: Counter): JobResult =
+      if (counter.jobId == jobId) copy(counters = counters + counter.counter) else this
+    def isComplete = counters.size >= howMany
+  }
+
 }
