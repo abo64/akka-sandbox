@@ -38,7 +38,7 @@ import akka.testkit.TestKit
 @RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class CountRetrieverSpec
   extends TestKit(ActorSystem("CountRetrieverSpec", 
-      ConfigFactory.parseString("akka.loglevel=WARNING").withFallback(ConfigFactory.load)))
+      ConfigFactory.parseString("akka.loglevel=DEBUG").withFallback(ConfigFactory.load)))
   with ImplicitSender with DefaultTimeout
   with Matchers with FlatSpecLike with BeforeAndAfterAll with Eventually with IntegrationPatience
 {
@@ -170,10 +170,11 @@ class CountRetrieverSpec
   it should "3.2 recover in case of restart" in {
     val unsafeCountProvider = new CountProvider {
       val calls = new AtomicInteger(0)
-      private def throwException =
-        calls.incrementAndGet % 3 == 0
+      private def throwException(calls: Int) = calls == 3
       override def getNext = {
-        if (throwException) throw new Exception("ohMyGod!")
+        val newCalls = calls.incrementAndGet
+        println(s"newCalls=$newCalls")
+        if (throwException(newCalls)) throw new Exception(s"$newCalls: ohMyGod!")
         else super.getNext
       }
     }
@@ -188,11 +189,11 @@ class CountRetrieverSpec
       }
     }
     val restarter = system.actorOf(Props(new Restarter), "restarter")
-    val propsAndName = countRetrieverProps("3.2", unsafeCountProvider, Some("recover-me"))
+    val propsAndName = countRetrieverProps("3.2", unsafeCountProvider)//, Some("recover-me"))
     val retriever =
       Await.result(restarter ? propsAndName, 1 second).asInstanceOf[ActorRef]
     retriever ! GetCounters(77, 7)
-    within(2 seconds) {
+    within(4 seconds) {
       expectMsg(Counters(77, Set(1,2,3,4,5,6,7)))
     }
   }
