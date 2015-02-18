@@ -170,7 +170,8 @@ class CountRetrieverSpec
   it should "3.2 recover in case of restart" in {
     val unsafeCountProvider = new CountProvider {
       val calls = new AtomicInteger(0)
-      private def throwException(calls: Int) = calls == 3
+      private def throwException(call: Int) =
+        call % 3 == 0 && call < 50
       override def getNext = {
         val newCalls = calls.incrementAndGet
         println(s"newCalls=$newCalls")
