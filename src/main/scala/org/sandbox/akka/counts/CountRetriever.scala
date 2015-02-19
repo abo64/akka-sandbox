@@ -39,16 +39,6 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef, val persis
   private var timeoutCancellable: Option[Cancellable] = None
 
   override def receiveCommand: Receive = waiting
-//    jobResult map { jr =>
-//      setJobResult(jr)
-//      println(s"receiveCommand: $jobResult")
-//      collectCounts(jr.jobId, jr.requestor, jr.timeout)
-//    } getOrElse {
-//      println("switching to waiting")
-//      waiting
-//    }
-
-  //  override def preStart: Unit = {} // do not try to recover at Start time
 
   private def processCounter(counter: Counter) = {
     jobResult = jobResult map (_.updated(counter))
@@ -77,25 +67,17 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef, val persis
     case SnapshotOffer(_, snapshot: JobResult) =>
       println(s"SnapshotOffer for ${self.path.name}: $snapshot")
       setJobResult(snapshot)
-//    case jobResult: JobResult =>
-//      println(s"jobResult for ${self.path.name}: $jobResult")
-//      setJobResult(jobResult)
     case counter: Counter =>
       println(s"recover for ${self.path.name}: $counter")
       processCounter(counter)
     case RecoveryCompleted =>
       println(s"RecoveryCompleted for ${self.path.name}: $jobResult")
-      //      if (jobResult.isEmpty) context.become(waiting)
       jobResult foreach { jr =>
         setJobResult(jr)
         context.become(collectCounts(jr.jobId, jr.requestor, jr.timeout))
       }
     case x => println(s"unhandled recover for ${self.path.name}: $x")
   }
-
-  //  override def preRestart(reason: Throwable, message: Option[Any]) = {
-  //    super.preRestart(reason, message)
-  //  }
 
   private def createCountGetter: ActorRef = countGetterFactory(context)
 
@@ -120,15 +102,12 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef, val persis
       router = Some(getRouter(jobId, countersRequired))
       (1 to countersRequired) foreach (_ => sendGetCounter)
     }
-    //    context.become(collectCounts(jobId, sender, timeout))
   }
 
   private def waiting: Receive = LoggingReceive {
     {
       case GetCounters(jobId, howMany, timeout) =>
         val jobResult = JobResult(jobId, howMany, timeout, sender)
-        //        setJobResult(jobResult)
-        //        println(s"waiting1: router=$router jobResult=$jobResult")
         persist(jobResult) { jr =>
           setJobResult(jr)
           context.become(collectCounts(jobId, sender, timeout))
@@ -159,12 +138,10 @@ class CountRetriever(countGetterFactory: ActorRefFactory => ActorRef, val persis
     }
 
     def handleCircuitBreaker: Receive = {
-      def addRoutee(routee: ActorRef): Unit = {
-        val addRoutee =
-          router map (_.routees.contains(ActorRefRoutee(routee))) getOrElse (false)
-        if (addRoutee)
+      def addRoutee(routee: ActorRef): Unit =
+        router filter (_.routees.contains(ActorRefRoutee(routee))) foreach { _ =>
           router = router map (_.addRoutee(routee))
-      }
+        }
       def removeRoutee(routee: ActorRef): Unit =
         router = router map (_.removeRoutee(routee))
 
