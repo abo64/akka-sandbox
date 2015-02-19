@@ -22,3 +22,7 @@ case class Payloads(payloads: Seq[Payload]], chunkSize: Int)
 Hint: For creating a Seq[Payload] you can use this function  
 def payloads(howMany: Int): Seq[Payload] =  
   Stream.range(0, howMany).map(id => Payload(id , s"content$id"))
+
+## 3. CountRetriever [Code](src/main/scala/org/sandbox/akka/counts/CountRetriever.scala)
+Example for several Akka patterns like supervision, timeouts, stash, circuit breaker, persistence.  
+See the tests [CountRetrieverSpec](src/test/scala/org/sandbox/akka/counts/CountRetrieverSpec.scala) for more details.
