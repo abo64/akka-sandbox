@@ -40,11 +40,13 @@ object KafkaExample extends App {
   val s = consumer.start()  //returns a Future[Unit] that completes when the connector is started
   Await.ready(s, 2 seconds)
 
+  Thread.sleep(30000)
+
   val c = consumer.commit() //returns a Future[Unit] that completes when all in-flight messages are processed and offsets are committed.
   Await.ready(c, 2 seconds)
 
   val st = consumer.stop()   //returns a Future[Unit] that completes when the connector is stopped.
   Await.ready(st, 2 seconds)
-  
+
   system.shutdown
 }
