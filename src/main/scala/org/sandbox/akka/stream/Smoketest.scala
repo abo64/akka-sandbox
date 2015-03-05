@@ -16,8 +16,8 @@ object Smoketest extends App {
     implicit val materializer = ActorFlowMaterializer()
 
     val roundtripFile = io.Source.fromFile("src/main/resources/roundtrips.txt", "utf-8")
-    val roundtripJsonSource: Source[String] = Source(() => roundtripFile.getLines)
+    val roundtripJsonSource: Source[String, Unit] = Source(() => roundtripFile.getLines)
 
     type Roundtrip = Int
-    val roundtripSource: Source[Roundtrip] = roundtripJsonSource map (_.toInt)
+    val roundtripSource: Source[Roundtrip, Unit] = roundtripJsonSource map (_.toInt)
 }
